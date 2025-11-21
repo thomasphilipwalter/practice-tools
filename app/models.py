@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class VideoRecord(BaseModel):
     id: str  # UUID as string
@@ -9,13 +9,17 @@ class VideoRecord(BaseModel):
     user_id: str  # UUID as string
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    run_analysis: Optional[bool] = True  # Add this for future use
 
 class DatabaseEvent(BaseModel):
     type: str  # "INSERT", "UPDATE", etc.
     table: str  # "videos"
-    schema_name: str
+    schema_name: str = Field(alias="schema")  # Use alias to avoid shadowing BaseModel.schema
     record: VideoRecord
     old_record: Optional[VideoRecord] = None  # For UPDATE events
+    
+    class Config:
+        populate_by_name = True  # Allow both "schema" and "schema_name"
 
 class AnalyzeRequest(BaseModel):
     audio_path: str
