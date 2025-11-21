@@ -12,7 +12,7 @@ def run_note_analysis(audio_path: str) -> Dict[str, Any]:
 
     return {
         "note_count": len(note_analyses),
-        "notes": [_serialize_note_result(note) for note in note_analyses],
+        "notes": [_normalize_note(note) for note in note_analyses],
     }
 
 

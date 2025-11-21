@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     supabase_bucket: str | None = None
     webhook_secret: str | None = None
     tmp_dir: str = "/tmp"
-    metrics_table: str = "pactrice_metrics"
+    metrics_table: str = "practice_metrics"
 
     class Config:
         env_file = ".env"   
