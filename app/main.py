@@ -1,3 +1,4 @@
+import logging
 import os
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
@@ -7,6 +8,12 @@ from app.analysis import run_note_analysis
 from app.config import settings
 from app.models import AnalyzeRequest, AnalyzeResponse, DatabaseEvent
 from app.tasks import process_video_event
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 
 app = FastAPI(title="PracticeRoom Audio Analysis")
 
