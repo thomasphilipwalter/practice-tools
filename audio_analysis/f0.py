@@ -120,7 +120,8 @@ def cents_to_frequency(cents, reference_freq=440.0):
 
 def find_nearest_12tet_note(freq):
     """
-    Find the nearest 12-TET note to a given frequency. 
+    Find the nearest 12-tone equal temperament note to a given frequency. 
+    TODO: Account for tuning
 
     Returns:
     - (note_name, note_freq, deviation_cents)

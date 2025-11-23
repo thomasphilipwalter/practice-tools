@@ -49,7 +49,7 @@ async def analyze_audio(payload: AnalyzeRequest) -> AnalyzeResponse:
         result = await run_in_threadpool(run_note_analysis, payload.audio_path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc: 
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return AnalyzeResponse(**result)
@@ -68,8 +68,7 @@ async def videos_webhook(
     x_webhook_secret: str | None = Header(None),
 ) -> dict:
     """
-    Webhook endpoint for Supabase database events on the videos table.
-    Configure this URL in Supabase: Database -> Webhooks -> New Hook
+        Webhook endpoint for Supabase video table events
     """
     _verify_webhook_secret(x_webhook_secret)
     
