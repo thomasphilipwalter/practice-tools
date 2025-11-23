@@ -118,27 +118,28 @@ def cents_to_frequency(cents, reference_freq=440.0):
     """
     return reference_freq * (2 ** (cents / 1200))
 
-def find_nearest_12tet_note(freq):
+def find_nearest_12tet_note(freq, tuning_freq=440.0):
     """
     Find the nearest 12-tone equal temperament note to a given frequency. 
-    TODO: Account for tuning
-
     Returns:
     - (note_name, note_freq, deviation_cents)
     """
     if freq <= 0 or np.isnan(freq):
         return None, None, None
     
-    midi_num = librosa.hz_to_midi(freq)     # frequency to MIDI (continuous)
-    nearest_midi = int(round(midi_num))     # Round to nearest int (12-TET MIDI note)
-    nearest_freq = librosa.midi_to_hz(nearest_midi)    # Convert back to frequency
-    note_name = librosa.midi_to_note(nearest_midi)      # Get note name
-    deviation_cents = frequency_to_cents(freq, nearest_freq)    # Calculate deviation in cents
+    # Calculate MIDI note num using the specific tuning frequency
+    midi_num = 69 + 12 * np.log2(freq / tuning_freq)
+    nearest_midi = int(round(midi_num))
+
+    # Convert MIDI back to frequency using the specified tuning
+    nearest_freq = tuning_freq * (2 ** ((nearest_midi - 69) / 12))
+    note_name = librosa.midi_to_note(nearest_midi)
+    deviation_cents = frequency_to_cents(freq, nearest_freq)
 
     return note_name, nearest_freq, deviation_cents
 
 
-def analyze_notes(f0, voiced_flag, voiced_probs, sr, hop_length=512):
+def analyze_notes(f0, voiced_flag, voiced_probs, sr, hop_length=512, tuning_freq=440.0):
     """
     Analyze F0 contour to extract note segments and calculate deviations from 12-TET
     
@@ -166,7 +167,7 @@ def analyze_notes(f0, voiced_flag, voiced_probs, sr, hop_length=512):
         avg_f0 = np.mean(valid_f0)
         
         # Find nearest 12-TET note and deviation
-        note_name, nearest_freq, deviation_cents = find_nearest_12tet_note(avg_f0)
+        note_name, nearest_freq, deviation_cents = find_nearest_12tet_note(avg_f0, tuning_freq)
         
         if note_name is None:
             continue
