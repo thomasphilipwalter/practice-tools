@@ -28,6 +28,14 @@ def download_from_storage(bucket: str, object_path: str) -> str:
     tmp.flush()
     return tmp.name
 
-def upsert_metrics(payload: Dict[str, Any]) -> None:
+def upsert_pitch_metrics(payload: Dict[str, Any]) -> None:
     client = _get_supabase_client()
-    client.table(settings.metrics_table).upsert(payload).execute()
+    client.table(settings.pitch_metrics_table).upsert(payload).execute()
+
+def upsert_vibrato_metrics(payload: Dict[str, Any]) -> None:
+    client = _get_supabase_client()
+    client.table(settings.vibrato_metrics_table).upsert(payload).execute()
+
+def upsert_temperament_metrics(payload: Dict[str, Any]) -> None:
+    client = _get_supabase_client()
+    client.table(settings.temperament_metrics_table).upsert(payload).execute()

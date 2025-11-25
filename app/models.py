@@ -13,7 +13,6 @@ class VideoRecord(BaseModel):
     mode: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    run_analysis: Optional[bool] = True  # NOT YET USED - SHOULD DELETE?
 
 class DatabaseEvent(BaseModel):
     type: str  # "INSERT", "UPDATE", etc.
