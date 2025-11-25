@@ -7,7 +7,6 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.analysis import run_note_analysis
 from app.config import settings
 from app.models import AnalyzeRequest, AnalyzeResponse, DatabaseEvent
 from app.tasks import process_video_event
@@ -38,21 +37,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
-
-
-@app.post("/analyze", response_model=AnalyzeResponse, status_code=200)
-async def analyze_audio(payload: AnalyzeRequest) -> AnalyzeResponse:
-    if not os.path.isfile(payload.audio_path):
-        raise HTTPException(status_code=404, detail="Audio file not found")
-
-    try:
-        result = await run_in_threadpool(run_note_analysis, payload.audio_path)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc: 
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-    return AnalyzeResponse(**result)
 
 
 def _verify_webhook_secret(secret: str | None) -> None:
