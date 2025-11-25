@@ -54,6 +54,8 @@ async def videos_webhook(
     """
         Webhook endpoint for Supabase video table events
     """
+    logger.info(f"Webhook received - Method: {request.method}, Headers: {dict(request.headers)}")
+    
     _verify_webhook_secret(x_webhook_secret)
     
     # Log raw request body for debugging
