@@ -53,7 +53,6 @@ def run_vibrato_analysis(f0: np.ndarray, voiced_flag: np.ndarray, voiced_probs: 
                 hop_length=hop_length
     )
 
-    return vibrato_results
     return {
         "times": vibrato_results["times"].tolist(),
         "rate_hz": vibrato_results["rate_hz"].tolist(),
