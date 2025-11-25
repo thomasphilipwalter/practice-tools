@@ -7,7 +7,9 @@ class Settings(BaseSettings):
     supabase_bucket: str | None = None
     webhook_secret: str | None = None
     tmp_dir: str = "/tmp"
-    metrics_table: str = "practice_metrics"
+    pitch_metrics_table: str = "pitch_metrics"
+    vibrato_metrics_table: str = "vibrato_metrics"
+    temperament_metrics_table: str = "temperament_metrics"
 
     class Config:
         env_file = ".env"   

@@ -7,9 +7,12 @@ class VideoRecord(BaseModel):
     description: Optional[str] = None
     video_url: str
     user_id: str  # UUID as string
+    analysis_codes: Optional[int] = None
+    tuning_freq: Optional[float] = None
+    starting_note: Optional[str] = None
+    mode: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
-    run_analysis: Optional[bool] = True  # Add this for future use
 
 class DatabaseEvent(BaseModel):
     type: str  # "INSERT", "UPDATE", etc.
