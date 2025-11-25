@@ -11,7 +11,7 @@ from app.config import settings
 _supabase: Optional[Client] = None
 
 def _get_supabase_client() -> Client:
-    """Lazily initialize Supabase client only when needed."""
+    """Lazily initialize Supabase client only when needed"""
     global _supabase
     if _supabase is None:
         if not settings.supabase_url or not settings.supabase_service_key:
@@ -27,8 +27,6 @@ def download_from_storage(bucket: str, object_path: str) -> str:
     tmp.write(data)
     tmp.flush()
     return tmp.name
-
-
 
 def upsert_metrics(payload: Dict[str, Any]) -> None:
     client = _get_supabase_client()

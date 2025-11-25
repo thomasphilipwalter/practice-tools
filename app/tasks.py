@@ -6,7 +6,8 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse, unquote
 
-from app.analysis import run_note_analysis
+from app.analysis import run_pitch_analysis, run_vibrato_analysis, run_temperament_analysis
+from audio_analysis.f0 import get_f0_contour
 from app.config import settings
 from app.models import DatabaseEvent
 from app.storage import download_from_storage, upsert_metrics, _get_supabase_client
@@ -119,9 +120,7 @@ def process_video_event(event: DatabaseEvent) -> None:
         logger.info(f"Downloading video from storage...")
         local_path = download_from_storage(bucket, object_path)
         logger.info(f"Video downloaded to: {local_path}")
-        
-        audio_path = None
-        
+
         # Check if file is video
         video_extensions = {".mp4", ".mov", ".avi", ".mkv", ".m4v", ".webm"}
         file_ext = Path(object_path).suffix.lower()
@@ -134,12 +133,17 @@ def process_video_event(event: DatabaseEvent) -> None:
             # Assume already audio
             logger.info(f"File appears to be audio, using directly")
             audio_path = local_path
+
+        # Extract f0 contour once (used by ALL analyssi types)
+        logger.info(f"Extracting F0 contour from audio...")
+        f0, voiced_flag, voiced_probs, sr = get_f0_contour(audio_path)
+        logger.info(f"F0 contour extracted: {len(f0)} frames")
         
         # Run PITCH analysis
         if _should_run_pitch_analysis(analysis_codes):
-            logger.info(f"Running audio analysis...")
-            result = run_note_analysis(audio_path, tuning_freq=tuning_freq)
-            logger.info(f"Analysis complete: {result['note_count']} notes found")
+            logger.info(f"Running pitch analysis...")
+            result = run_pitch_analysis(f0, voiced_flag, voiced_probs, sr, tuning_freq=tuning_freq)
+            logger.info(f"Pitch analysis complete: {result['note_count']} notes found")
 
             payload = {
                 "video_id": video_id,
@@ -155,12 +159,27 @@ def process_video_event(event: DatabaseEvent) -> None:
         # Run VIBRATO analysis
         if _should_run_vibrato_analysis(analysis_codes):
             logger.info(f"Running vibrato analysis...")
-            # TODO: implement functionality
+            result = run_vibrato_analysis(f0, voiced_flag, voiced_probs, sr, tuning_freq=tuning_freq)
+            # TODO: Save vibrato metrics to database
+            logger.info(f"Vibrato analysis complete")
         
         # Run TEMPERAMENT analysis
         if _should_run_temperament_analysis(analysis_codes):
             logger.info(f"Running temperament analysis...")
-            # TODO: implement functionality
+            # Validate required fields
+            if not video_record.starting_note or not video_record.mode:
+                logger.warning(f"Temperament analysis requires starting_note and mode. "
+                             f"Starting note: {video_record.starting_note}, Mode: {video_record.mode}")
+                logger.warning(f"Skipping temperament analysis for video {video_id}")
+            else:
+                result = run_temperament_analysis(
+                    f0, voiced_flag, voiced_probs, sr,
+                    tuning_freq=tuning_freq,
+                    starting_note=video_record.starting_note,
+                    mode=video_record.mode
+                )
+                # TODO: Save temperament metrics to database
+                logger.info(f"Temperament analysis complete")
         
     except Exception as e:
         logger.error(f"Error processing video {video_id}: {str(e)}", exc_info=True)

@@ -4,31 +4,159 @@ import os
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy import signal
+from scipy.ndimage import median_filter
+from scipy.signal import medfilt
 
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Import an audio file and process F0 contour"
-    )
-    parser.add_argument(
-        "audio_path",
-        type=str,
-        help="Path to the audio file",
-    )
-    return parser.parse_args()
+def interpolate_f0_within_voiced_blocks(f0, voiced_flag):
+    """
+    Linearly interpolate NaN values in the F0 contour, within contiguous voiced regions.
+    Unvoiced regions left unchanged (preserve note boundaries/rests)
+    Returns interpolated f0 contour
+    """
 
-def get_f0_contour(audio_path):
-    y, sr = librosa.load(audio_path)
-    f0, voiced_flag, voiced_probs = librosa.pyin(
+    # Input validation
+    f0 = np.asarray(f0, dtype=float)
+    voiced_flag = np.asarray(voiced_flag, dtype=bool)
+    if f0.shape != voiced_flag.shape:
+        raise ValueError("f0 and voiced_flag must have same shape (interpolation func)")
+    
+    f0_interp = f0.copy()
+
+    # Get indices of all unvoiced frames
+    voiced_indices = np.flatnonzero(voiced_flag)
+    if len(voiced_indices) == 0:
+        return f0_interp
+    
+    # Find boundaries between contiguous voiced blocks
+    gaps = np.where(np.diff(voiced_indices) > 1)[0]
+    block_starts = np.concatenate(([0], gaps + 1))
+    block_ends = np.concatenate((gaps, [len(voiced_indices) - 1]))
+
+    # Iterate over each voiced block
+    for start_idx, end_idx in zip(block_starts, block_ends):
+
+        # Extract block data
+        block_indices = voiced_indices[start_idx:end_idx + 1]
+        block_f0 = f0_interp[block_indices]
+
+        # Inside this block, may still have NaNs
+        not_nan = ~np.isnan(block_f0)
+        
+        # If all nans, or none nans, continue
+        if not np.any(not_nan) or np.all(not_nan):
+            continue
+
+        # 1d linear interpolation over time indices
+        known_x = block_indices[not_nan]
+        known_y = block_f0[not_nan]
+        missing_x = block_indices[~not_nan]
+
+        interp_vals = np.interp(missing_x, known_x, known_y)
+
+        # Write interpolated values back
+        f0_interp[missing_x] = interp_vals
+    
+    return f0_interp
+
+def smooth_f0_contour(f0, voiced_flag, voiced_probs, median_filter_size=5, moving_average_window=3, min_voiced_prob=0.1):
+    """
+    Smooth F0 contour to remove noise and outliers
+    Return regular contour data, but smoothed
+    """
+
+    # Convert all input to numpy arrays
+    f0 = np.asarray(f0, dtype=float)
+    voiced_flag = np.asarray(voiced_flag, dtype=bool)
+    voiced_probs = np.asarray(voiced_probs, dtype=float)
+
+    # Ensure 1-1 mapping between arrays (should never fail)
+    if not (f0.shape == voiced_flag.shape == voiced_probs.shape):
+        raise ValueError("f0, voiced_flag, and voiced_probs must have the same shape")
+
+    # Apply minimum probability threshold
+    smoothed_voiced_flag = voiced_flag & (voiced_probs >= min_voiced_prob) # Elementwise set true ONLY if both
+    smoothed_voiced_probs = voiced_probs.copy()
+    smoothed_voiced_probs[~smoothed_voiced_flag] = 0.0 # If not voiced, set prob to 0
+
+    # Set f0 to NaN if not voiced
+    smoothed_f0 = f0.copy()
+    smoothed_f0[~smoothed_voiced_flag] = np.nan 
+
+    # Interpolate NaNs WITHIN each voiced block
+    smoothed_f0 = interpolate_f0_within_voiced_blocks(smoothed_f0, smoothed_voiced_flag)
+    
+    # If no voiced frames remain, return early
+    if not np.any(smoothed_voiced_flag):
+        return smoothed_f0, smoothed_voiced_flag, smoothed_voiced_probs
+
+    # Helper to smooth a 1D block with median + moving average
+    def _smooth_block(block_values):
+        x = block_values.copy()
+
+        # Median filter
+        if median_filter_size > 1 and median_filter_size % 2 == 1:
+            x = medfilt(x, kernel_size=median_filter_size)
+
+        # Moving average
+        if moving_average_window > 1:
+            kernel = np.ones(moving_average_window) / moving_average_window
+            pad = moving_average_window // 2
+            padded = np.pad(x, (pad, pad), mode="edge")
+            x = np.convolve(padded, kernel, mode="valid")
+
+        return x
+
+    # Apply smoothing block-wise inside voiced segments
+    voiced_indices = np.flatnonzero(smoothed_voiced_flag) 
+    gaps = np.where(np.diff(voiced_indices) > 1)[0]
+    block_starts = np.concatenate(([0], gaps + 1)) # First index of each gap block
+    block_ends   = np.concatenate((gaps, [len(voiced_indices) - 1])) # Last index of each gap block
+
+    for start_idx, end_idx in zip(block_starts, block_ends):
+        block_indices = voiced_indices[start_idx:end_idx + 1]
+        block_f0 = smoothed_f0[block_indices]
+
+        # Defensive check, shouldn't execute
+        if block_f0.size == 0: 
+            continue
+        
+        # Apply smoothing
+        smoothed_block = _smooth_block(block_f0)
+        smoothed_f0[block_indices] = smoothed_block
+
+    return smoothed_f0, smoothed_voiced_flag, smoothed_voiced_probs
+
+def get_f0_contour(audio_path, smooth=False, hop_length=512, median_filter_size=5, moving_average_window=3, min_voiced_prob=0.1):
+    """
+    Extract f0 contour from an audio file, optionally smooth.
+    Return fundamental frequencies, voicing, probability voiced, sample rate, hop length.
+    """
+    y, sr = librosa.load(audio_path) # Load audio (returns audio time-series samples, sample rate)
+    f0, voiced_flag, voiced_probs = librosa.pyin( # Get contour using probablistic YIN algorithm
         y, 
         sr=sr, 
         fmin=librosa.note_to_hz('C2'), 
-        fmax=librosa.note_to_hz('C7'))
-    return f0, voiced_flag, voiced_probs, sr
+        fmax=librosa.note_to_hz('C7'),
+        hop_length=hop_length)
+
+    if smooth:
+        f0, voiced_flag, voiced_probs = smooth_f0_contour(
+            f0, 
+            voiced_flag, 
+            voiced_probs, 
+            median_filter_size=median_filter_size,
+            moving_average_window=moving_average_window,
+            min_voiced_prob=min_voiced_prob
+        )
+    
+    return f0, voiced_flag, voiced_probs, sr, hop_length
 
 def segment_notes(f0, voiced_flag, min_note_duration_frames=10, silence_threshold_frames=5, pitch_change_threshold_semitones=0.5, pitch_average_window=5):
     """
-    Segment F0 contour into individual notes based on voicing and pitch changes.
-    
+    Segment f0 into individual notes based on voicing and pitch changes
+    NOTE: Does some redundant work if smoothing was applied on f0 contour
+
     Parameters: 
     - min_note_duration_frames: Minimum frames for a note to be considered valid
     - silence_threshold_frames: Frames of silence to consider as note boundary
@@ -38,33 +166,30 @@ def segment_notes(f0, voiced_flag, min_note_duration_frames=10, silence_threshol
     Returns:
     - List of tuples: (start_frame, end_frame) for each note segment
     """
-
     notes = []
     in_note = False
     note_start = 0
     recent_pitches = []  # Track recent pitches for running average
     
     for i in range(len(voiced_flag)):
+        # New voicing —> start new note
         if voiced_flag[i] and not in_note:
-            # Start of new note
             in_note = True
             note_start = i
             current_pitch = f0[i]
             if not np.isnan(current_pitch):
                 recent_pitches = [current_pitch]
+        # Not new voicing -> Check if pitch changed
         elif voiced_flag[i] and in_note:
-            # We're in a note and still voiced - check for pitch change
             current_pitch = f0[i]
-            
+            # Frequency detected -> Check if pitch change
             if not np.isnan(current_pitch):
-                # Calculate average of recent pitches as reference
+                # Recent pitches exist -> Caclulate average & compare
                 if len(recent_pitches) > 0:
                     reference_pitch = np.mean(recent_pitches)
-                    
                     # Calculate pitch change in semitones
                     pitch_change_semitones = 12 * np.log2(current_pitch / reference_pitch)
-                    
-                    # If pitch change is significant, end current note and start new one
+                    # If above threshold, start new note
                     if abs(pitch_change_semitones) >= pitch_change_threshold_semitones:
                         note_end = i
                         if note_end - note_start >= min_note_duration_frames:
@@ -72,13 +197,13 @@ def segment_notes(f0, voiced_flag, min_note_duration_frames=10, silence_threshol
                         # Start new note
                         note_start = i
                         recent_pitches = [current_pitch]
+                    # Not above threshold, keep note and add to recent pitches
                     else:
-                        # Update recent pitches (sliding window)
                         recent_pitches.append(current_pitch)
                         if len(recent_pitches) > pitch_average_window:
                             recent_pitches.pop(0)
+                # Recent pitches don't exist -> firsrt valid pitch
                 else:
-                    # First valid pitch in note
                     recent_pitches.append(current_pitch)
         elif not voiced_flag[i] and in_note:
             # Check if this is a sustained silence (note end)
@@ -120,14 +245,19 @@ def cents_to_frequency(cents, reference_freq=440.0):
 
 def find_nearest_12tet_note(freq, tuning_freq=440.0):
     """
-    Find the nearest 12-tone equal temperament note to a given frequency. 
+    Find the nearest 12-tone equal temperament note to a given frequency.
+    
+    Parameters:
+    - freq: Frequency in Hz
+    - tuning_freq: A4 tuning frequency (default 440 Hz)
+    
     Returns:
     - (note_name, note_freq, deviation_cents)
     """
     if freq <= 0 or np.isnan(freq):
         return None, None, None
     
-    # Calculate MIDI note num using the specific tuning frequency
+    # Calculate MIDI note number using the specific tuning frequency
     midi_num = 69 + 12 * np.log2(freq / tuning_freq)
     nearest_midi = int(round(midi_num))
 
@@ -137,169 +267,3 @@ def find_nearest_12tet_note(freq, tuning_freq=440.0):
     deviation_cents = frequency_to_cents(freq, nearest_freq)
 
     return note_name, nearest_freq, deviation_cents
-
-
-def analyze_notes(f0, voiced_flag, voiced_probs, sr, hop_length=512, tuning_freq=440.0):
-    """
-    Analyze F0 contour to extract note segments and calculate deviations from 12-TET
-    
-    Returns:
-    - list of dictionaries with note info
-    """
-    notes = segment_notes(f0, voiced_flag)
-    hop_length = 512
-    times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=hop_length)
-    
-    note_analyses = []
-    
-    for start_frame, end_frame in notes:
-        # Extract F0 values for this note (only voiced frames)
-        note_f0 = f0[start_frame:end_frame]
-        note_voiced = voiced_flag[start_frame:end_frame]
-        
-        # Filter to only valid (voiced) F0 values
-        valid_f0 = note_f0[note_voiced & ~np.isnan(note_f0)]
-        
-        if len(valid_f0) == 0:
-            continue
-        
-        # Average F0 for this note
-        avg_f0 = np.mean(valid_f0)
-        
-        # Find nearest 12-TET note and deviation
-        note_name, nearest_freq, deviation_cents = find_nearest_12tet_note(avg_f0, tuning_freq)
-        
-        if note_name is None:
-            continue
-        
-        # Calculate note duration - handle edge case where end_frame might be out of bounds
-        start_time = times[start_frame]
-        end_time = librosa.frames_to_time([end_frame], sr=sr, hop_length=hop_length)[0]
-        duration = end_time - start_time
-        
-        note_analyses.append({
-            'start_time': start_time,
-            'end_time': end_time,
-            'duration': duration,
-            'avg_f0': avg_f0,
-            'nearest_note': note_name,
-            'nearest_freq': nearest_freq,
-            'deviation_cents': deviation_cents,
-            'start_frame': start_frame,
-            'end_frame': end_frame
-        })
-    
-    return note_analyses
-
-def plot_analysis(f0, voiced_flag, voiced_probs, sr, note_analyses):
-    """
-    Plot F0 contour with note segments and deviation information.
-    """
-    hop_length = 512
-    times = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=hop_length)
-    
-    fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-    
-    # Plot 1: F0 contour with note segments
-    axes[0].plot(times, f0, linewidth=1, color='lightblue', alpha=0.5, label='F0 contour')
-    
-    # Highlight note segments
-    for note in note_analyses:
-        start_idx = note['start_frame']
-        end_idx = note['end_frame']
-        note_times = times[start_idx:end_idx]
-        note_f0 = f0[start_idx:end_idx]
-        
-        # Plot note segment
-        axes[0].plot(note_times, note_f0, linewidth=2, color='blue')
-        
-        # Mark average pitch
-        avg_time = (note['start_time'] + note['end_time']) / 2
-        axes[0].plot(avg_time, note['avg_f0'], 'ro', markersize=8)
-        
-        # Mark nearest 12-TET pitch
-        axes[0].axhline(y=note['nearest_freq'], xmin=note['start_time']/times[-1], 
-                        xmax=note['end_time']/times[-1], 
-                        color='red', linestyle='--', alpha=0.5)
-        
-        # Add note label
-        axes[0].text(avg_time, note['avg_f0'], 
-                    f"{note['nearest_note']}\n{note['deviation_cents']:.1f}¢",
-                    ha='center', va='bottom', fontsize=8,
-                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
-    
-    axes[0].set_ylabel('Frequency (Hz)')
-    axes[0].set_title('F0 Contour with Note Segments and 12-TET Deviations')
-    axes[0].grid(True, alpha=0.3)
-    axes[0].legend()
-    axes[0].set_yscale('log')  # Log scale for better visualization
-    
-    # Plot 2: Deviation in cents for each note
-    if note_analyses:
-        note_indices = np.arange(len(note_analyses))
-        deviations = [note['deviation_cents'] for note in note_analyses]
-        note_names = [note['nearest_note'] for note in note_analyses]
-        
-        axes[1].bar(note_indices, deviations, color='steelblue', alpha=0.7)
-        axes[1].axhline(y=0, color='black', linestyle='-', linewidth=1)
-        axes[1].set_ylabel('Deviation from 12-TET (cents)')
-        axes[1].set_xlabel('Note Number')
-        axes[1].set_title('Pitch Deviation from Nearest 12-TET Note')
-        axes[1].set_xticks(note_indices)
-        axes[1].set_xticklabels(note_names, rotation=45, ha='right')
-        axes[1].grid(True, alpha=0.3, axis='y')
-    
-    plt.tight_layout()
-    plt.show()
-
-
-def print_analysis(note_analyses):
-    """
-    Print a summary table of note analyses.
-    """
-    print("\n" + "="*80)
-    print("Note Analysis: Deviation from 12-TET")
-    print("="*80)
-    print(f"{'Note':<8} {'Avg F0 (Hz)':<12} {'12-TET Note':<12} {'12-TET F0 (Hz)':<15} {'Deviation (cents)':<18}")
-    print("-"*80)
-    
-    for i, note in enumerate(note_analyses):
-        print(f"{i+1:<8} {note['avg_f0']:<12.2f} {note['nearest_note']:<12} "
-              f"{note['nearest_freq']:<15.2f} {note['deviation_cents']:<18.2f}")
-    
-    if note_analyses:
-        avg_deviation = np.mean([abs(note['deviation_cents']) for note in note_analyses])
-        print("-"*80)
-        print(f"Average absolute deviation: {avg_deviation:.2f} cents")
-    print("="*80 + "\n")
-
-
-def main():
-    # Get path
-    args = parse_args()
-    audio_path = args.audio_path
-
-    # Check path exists
-    if not os.path.exists(audio_path):
-        print(f"Error: file does not exist: {audio_path}", file=sys.stderr)
-        sys.exit(1)
-
-    # Check if file
-    if not os.path.isfile(audio_path):
-        print(f"Error: path is not a file: {audio_path}", file=sys.stderr)
-        sys.exit(1)
-
-    # Extract F0 contour
-    f0, voiced_flag, voiced_probs, sr = get_f0_contour(audio_path)
-    
-    # Analyze notes
-    note_analyses = analyze_notes(f0, voiced_flag, voiced_probs, sr)
-    
-    # Print results
-    print_analysis(note_analyses)
-    
-    # Plot results
-    plot_analysis(f0, voiced_flag, voiced_probs, sr, note_analyses)
-
-if __name__ == "__main__":
-    main()
