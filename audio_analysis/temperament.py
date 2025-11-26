@@ -43,6 +43,10 @@ def parse_note_name(note: str):
     octave: int
     """
     note = note.strip()
+
+    # Normalize Unicode sharp/flat ot ascii
+    note = note.replace('♯', '#').replace('♭', 'b')
+    
     # Octave is last char (or last 2), librosa uses ex: C#4
     if len(note) >= 3 and note[-2].isdigit():
         pitch = note[:-2]
